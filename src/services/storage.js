@@ -1,4 +1,4 @@
-﻿import { INITIAL_SCHEDULES } from './sampleData';
+import { INITIAL_SCHEDULES } from './sampleData';
 
 const LOCAL_STORAGE_KEY = 'sodam_sports_schedules_v2';
 
@@ -52,32 +52,40 @@ export const subscribeToSchedules = (onDataCallback) => {
   let ws = null;
   let isConnected = false;
 
-  // 1. 초기 로컬 캐시 즉시 전달 (빠른 첫 화면 렌더링)
-  onDataCallback(getLocalSchedules(), false);
+  // 1. 초기 데이터 즉시 콜백 실행 (화면 즉시 렌더링 보장)
+  const initialData = getLocalSchedules();
+  onDataCallback(initialData, false);
 
-  // 2. 백엔드 REST API 초기 데이터 가져오기 시도
-  const apiBase = getApiBaseUrl();
-  fetch(`${apiBase}/api/schedules`)
-    .then((res) => res.json())
-    .then((data) => {
-      if (Array.isArray(data) && data.length > 0) {
-        setLocalSchedules(data);
-        onDataCallback(data, true);
-      }
-    })
-    .catch((err) => {
-      console.warn('Backend API not responding, running in local storage mode:', err);
-    });
+  const isLocalOrCustomServer = typeof window !== 'undefined' && 
+    (window.location.hostname === 'localhost' || 
+     window.location.hostname === '127.0.0.1' || 
+     window.location.hostname.startsWith('192.168.') || 
+     window.location.hostname.includes('loca.lt'));
 
-  // 3. WebSocket 실시간 연결 수립
-  const connectWs = () => {
+  // 로컬/전용 서버 환경일 때만 백엔드 동기화 시도
+  if (isLocalOrCustomServer) {
     try {
+      const apiBase = getApiBaseUrl();
+      fetch(`${apiBase}/api/schedules`)
+        .then((res) => {
+          if (res.ok) return res.json();
+          throw new Error('API response not ok');
+        })
+        .then((data) => {
+          if (Array.isArray(data) && data.length > 0) {
+            setLocalSchedules(data);
+            onDataCallback(data, true);
+          }
+        })
+        .catch(() => {
+          // 백엔드 없어도 로컬 모드로 안정적 유지
+        });
+
       const wsUrl = getWsUrl();
       ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         isConnected = true;
-        console.log('⚡ 실시간 동기화 서버 연결 성공!');
       };
 
       ws.onmessage = (event) => {
@@ -87,27 +95,14 @@ export const subscribeToSchedules = (onDataCallback) => {
             setLocalSchedules(msg.data);
             onDataCallback(msg.data, true);
           }
-        } catch (e) {
-          console.error('WS message error:', e);
-        }
+        } catch (e) {}
       };
 
-      ws.onclose = () => {
-        isConnected = false;
-        // 3초 후 재연결 시도
-        setTimeout(connectWs, 3000);
+      ws.onerror = () => {
+        if (ws) ws.close();
       };
-
-      ws.onerror = (err) => {
-        console.warn('WS error, fallback to local storage:', err);
-        ws.close();
-      };
-    } catch (e) {
-      console.warn('WebSocket connection failed:', e);
-    }
-  };
-
-  connectWs();
+    } catch (err) {}
+  }
 
   // Local storage change listener
   const handleLocalUpdate = (e) => {
@@ -117,7 +112,7 @@ export const subscribeToSchedules = (onDataCallback) => {
 
   return () => {
     if (ws) {
-      ws.close();
+      try { ws.close(); } catch(e) {}
     }
     window.removeEventListener('local-schedules-updated', handleLocalUpdate);
   };
