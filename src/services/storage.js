@@ -1,23 +1,66 @@
-import { INITIAL_SCHEDULES } from './sampleData';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 
 const LOCAL_STORAGE_KEY = 'sodam_sports_schedules_v2';
+const FIREBASE_CONFIG_KEY = 'sodam_sports_firebase_config';
 
-// 백엔드 API URL 및 WebSocket URL 동적 계산
-const getApiBaseUrl = () => {
-  if (typeof window === 'undefined') return 'http://localhost:4000';
-  const protocol = window.location.protocol;
-  const hostname = window.location.hostname;
-  // 개발 모드(포트 5173)일 때는 4000 포트의 백엔드로 연결, 프로덕션에서는 현재 포트 사용
-  const port = window.location.port === '5173' ? '4000' : window.location.port;
-  return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
+// 소담초등학교 기본 인솔 일정 데이터 (20건)
+export const INITIAL_SCHEDULES = [
+  { id: "sodam-sheet-01", sport: "족구", title: "족구 여초부 C조 예선", date: "2026-08-21", time: "17:00", location: "나성중학교 체육관", gatheringTime: "16:20", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭", "박이슬"], playersCount: 6, transportation: "학교 차량 / 인솔 이동", supplies: "족구공, 유니폼, 음료수", memo: "6명 예정 (정광섭, 박이슬 섭외 완료)", status: "scheduled" },
+  { id: "sodam-sheet-02", sport: "배드민턴", title: "배드민턴 여초부 예선", date: "2026-08-22", time: "11:30 출발 (경기 오후)", location: "세종시민체육관", gatheringTime: "11:30", gatheringPlace: "소담초 정문 집결", teachers: ["임현지", "정광섭"], playersCount: 7, transportation: "학교 버스/인솔", supplies: "라켓, 셔틀콕, 식수", memo: "7~8명 예정 (임현지, 정광섭 섭외 완료)", status: "scheduled" },
+  { id: "sodam-sheet-03", sport: "배드민턴", title: "배드민턴 여초부 결선", date: "2026-08-23", time: "07:30 출발", location: "세종시민체육관", gatheringTime: "07:30", gatheringPlace: "소담초 정문 집결", teachers: ["임현지", "정광섭"], playersCount: 7, transportation: "학교 버스/인솔", supplies: "라켓, 셔틀콕, 식수", memo: "7~8명 예정 (임현지, 정광섭 섭외 완료)", status: "scheduled" },
+  { id: "sodam-sheet-04", sport: "족구", title: "족구 여초부 본선", date: "2026-08-27", time: "15:30", location: "나성중학교 체육관", gatheringTime: "15:00", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭", "박이슬"], playersCount: 6, transportation: "학교 차량/인솔", supplies: "족구공, 유니폼, 음료수", memo: "6명 예정 (정광섭, 박이슬 섭외 완료)", status: "scheduled" },
+  { id: "sodam-sheet-05", sport: "족구", title: "족구 남초 예선", date: "2026-08-28", time: "18:00", location: "나성중학교 체육관", gatheringTime: "17:20", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭", "박이슬"], playersCount: 8, transportation: "학교 차량/인솔", supplies: "족구공, 유니폼, 음료수", memo: "6~8명 예정 (정광섭, 박이슬 섭외 완료)", status: "scheduled" },
+  { id: "sodam-sheet-06", sport: "족구", title: "족구 남초 본선", date: "2026-08-30", time: "09:00 - 13:50", location: "나성중학교 체육관", gatheringTime: "08:30", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭", "박이슬"], playersCount: 8, transportation: "학교 차량/인솔", supplies: "족구공, 유니폼, 음료수, 간식", memo: "6~8명 예정 (정광섭, 박이슬 섭외 완료)", status: "scheduled" },
+  { id: "sodam-sheet-07", sport: "농구", title: "농구 친선/예선 경기", date: "2026-09-01", time: "18:00", location: "도담중학교 체육관", gatheringTime: "17:15", gatheringPlace: "소담초 1층 로비", teachers: ["한동훈", "정광섭", "박이슬"], playersCount: 11, transportation: "차량 인솔", supplies: "농구공, 유니폼, 음료수", memo: "10~12명 (한동훈, 정광섭, 박이슬 섭외 완료)", status: "scheduled" },
+  { id: "sodam-sheet-08", sport: "배구", title: "배구 남초 2조 예선", date: "2026-09-02", time: "16:00~", location: "한솔중학교 체육관", gatheringTime: "15:20", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭", "임현지"], playersCount: 12, transportation: "인솔 이동", supplies: "배구공, 무릎보호대, 음료수", memo: "12명 예정", status: "scheduled" },
+  { id: "sodam-sheet-09", sport: "배구", title: "배구 여초 2조 예선", date: "2026-09-03", time: "16:30~", location: "한솔중학교 체육관", gatheringTime: "15:50", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭"], playersCount: 12, transportation: "인솔 이동", supplies: "배구공, 무릎보호대, 음료수", memo: "12명 예정 (전교직원다모임 날)", status: "scheduled" },
+  { id: "sodam-sheet-10", sport: "배구", title: "배구 남초 2조 예선 (2차)", date: "2026-09-05", time: "09:00~", location: "한솔중학교 체육관", gatheringTime: "08:20", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭", "김민지"], playersCount: 12, transportation: "인솔 이동", supplies: "배구공, 무릎보호대, 음료수", memo: "12명 예정", status: "scheduled" },
+  { id: "sodam-sheet-11", sport: "배구", title: "배구 남초 결선", date: "2026-09-10", time: "16:30~", location: "한솔중학교 체육관", gatheringTime: "15:50", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭", "김민지"], playersCount: 12, transportation: "인솔 이동", supplies: "배구공, 무릎보호대, 음료수", memo: "12명 예정 (어쩌면 결선 진출 가능)", status: "scheduled" },
+  { id: "sodam-sheet-12", sport: "배구", title: "배구 여초 2조 예선 (2차)", date: "2026-09-12", time: "09:00~", location: "한솔중학교 체육관", gatheringTime: "08:20", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭"], playersCount: 12, transportation: "인솔 이동", supplies: "배구공, 무릎보호대, 음료수", memo: "12명 예정", status: "scheduled" },
+  { id: "sodam-sheet-13", sport: "플라잉디스크", title: "플라잉디스크 남초 토너먼트", date: "2026-09-12", time: "10:00", location: "부강체육공원", gatheringTime: "09:15", gatheringPlace: "소담초 정문 버스 탑승", teachers: ["정광섭"], playersCount: 12, transportation: "버스 이동", supplies: "원반 디스크, 모자, 선크림, 식수", memo: "12명 예정", status: "scheduled" },
+  { id: "sodam-sheet-14", sport: "플라잉디스크", title: "플라잉디스크 여초 토너먼트", date: "2026-09-12", time: "13:30", location: "부강체육공원", gatheringTime: "12:45", gatheringPlace: "소담초 정문 버스 탑승", teachers: ["정광섭"], playersCount: 12, transportation: "버스 이동", supplies: "원반 디스크, 모자, 선크림, 식수", memo: "12명 예정", status: "scheduled" },
+  { id: "sodam-sheet-15", sport: "배구", title: "배구 여초 결선", date: "2026-09-14", time: "16:30~", location: "한솔중학교 체육관", gatheringTime: "15:50", gatheringPlace: "소담초 체육관 앞", teachers: ["정광섭"], playersCount: 12, transportation: "인솔 이동", supplies: "배구공, 무릎보호대, 음료수", memo: "12명 예정 (확률 제로 수준 낮음)", status: "scheduled" },
+  { id: "sodam-sheet-16", sport: "티볼", title: "티볼 예선 경기", date: "2026-09-16", time: "15:30 출발", location: "해밀 한빛체육공원 축구장", gatheringTime: "15:30", gatheringPlace: "소담초 정문 버스 탑승", teachers: ["이재환", "김민지"], playersCount: 14, transportation: "버스 이동", supplies: "배트, 티볼 글러브, 헬멧, 음료수", memo: "13명~15명 예상", status: "scheduled" },
+  { id: "sodam-sheet-17", sport: "농구", title: "농구 본선 경기", date: "2026-09-19", time: "10:00", location: "도담중학교 체육관", gatheringTime: "09:15", gatheringPlace: "소담초 1층 로비", teachers: ["한동훈", "임현지", "이재환"], playersCount: 11, transportation: "차량 인솔", supplies: "농구공, 유니폼, 스포츠음료", memo: "10~12명", status: "scheduled" },
+  { id: "sodam-sheet-18", sport: "플라잉디스크", title: "플라잉디스크 남초 결승", date: "2026-09-19", time: "11:00", location: "부강체육공원", gatheringTime: "10:15", gatheringPlace: "소담초 정문 집결", teachers: ["정광섭"], playersCount: 12, transportation: "버스 이동", supplies: "원반 디스크, 모자, 식수", memo: "12명 예정", status: "scheduled" },
+  { id: "sodam-sheet-19", sport: "플라잉디스크", title: "플라잉디스크 여초 결승", date: "2026-09-19", time: "11:40", location: "부강체육공원", gatheringTime: "10:50", gatheringPlace: "소담초 정문 집결", teachers: ["정광섭"], playersCount: 12, transportation: "버스 이동", supplies: "원반 디스크, 모자, 식수", memo: "12명 예정 (확률 낮음)", status: "scheduled" },
+  { id: "sodam-sheet-20", sport: "티볼", title: "티볼 본선 경기", date: "2026-09-30", time: "15:30 출발", location: "해밀 한빛체육공원 축구장", gatheringTime: "15:30", gatheringPlace: "소담초 정문 버스 탑승", teachers: ["이재환"], playersCount: 14, transportation: "버스 이동", supplies: "배트, 티볼 글러브, 헬멧, 음료수", memo: "13명~15명 예상", status: "scheduled" }
+];
+
+export const getFirebaseConfig = () => {
+  try {
+    const raw = localStorage.getItem(FIREBASE_CONFIG_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
 };
 
-const getWsUrl = () => {
-  if (typeof window === 'undefined') return 'ws://localhost:4000';
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const hostname = window.location.hostname;
-  const port = window.location.port === '5173' ? '4000' : window.location.port;
-  return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
+export const setFirebaseConfig = (config) => {
+  if (config) {
+    localStorage.setItem(FIREBASE_CONFIG_KEY, JSON.stringify(config));
+  } else {
+    localStorage.removeItem(FIREBASE_CONFIG_KEY);
+  }
+};
+
+let firestoreDb = null;
+
+export const initFirestore = () => {
+  const config = getFirebaseConfig();
+  if (!config || !config.apiKey || !config.projectId) {
+    firestoreDb = null;
+    return null;
+  }
+  try {
+    const app = getApps().length === 0 ? initializeApp(config) : getApp();
+    firestoreDb = getFirestore(app);
+    return firestoreDb;
+  } catch (e) {
+    firestoreDb = null;
+    return null;
+  }
 };
 
 export const getLocalSchedules = () => {
@@ -25,201 +68,120 @@ export const getLocalSchedules = () => {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
-  } catch (e) {
-    console.error('Failed to read from localStorage', e);
-  }
-  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(INITIAL_SCHEDULES));
+  } catch (e) {}
+  saveLocalSchedules(INITIAL_SCHEDULES);
   return INITIAL_SCHEDULES;
 };
 
-export const setLocalSchedules = (schedules) => {
+export const saveLocalSchedules = (schedules) => {
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(schedules));
     window.dispatchEvent(new CustomEvent('local-schedules-updated', { detail: schedules }));
-  } catch (e) {
-    console.error('Failed to save to localStorage', e);
-  }
+  } catch (e) {}
 };
 
-/**
- * 실시간 일정 구독 (내장 실시간 WebSocket 서버 + LocalStorage Fallback)
- */
-export const subscribeToSchedules = (onDataCallback) => {
-  let ws = null;
-  let isConnected = false;
+export const subscribeToSchedules = (callback) => {
+  const db = initFirestore();
+  const localData = getLocalSchedules();
+  callback(localData, Boolean(db));
 
-  // 1. 초기 데이터 즉시 콜백 실행 (화면 즉시 렌더링 보장)
-  const initialData = getLocalSchedules();
-  onDataCallback(initialData, false);
-
-  const isLocalOrCustomServer = typeof window !== 'undefined' && 
-    (window.location.hostname === 'localhost' || 
-     window.location.hostname === '127.0.0.1' || 
-     window.location.hostname.startsWith('192.168.') || 
-     window.location.hostname.includes('loca.lt'));
-
-  // 로컬/전용 서버 환경일 때만 백엔드 동기화 시도
-  if (isLocalOrCustomServer) {
-    try {
-      const apiBase = getApiBaseUrl();
-      fetch(`${apiBase}/api/schedules`)
-        .then((res) => {
-          if (res.ok) return res.json();
-          throw new Error('API response not ok');
-        })
-        .then((data) => {
-          if (Array.isArray(data) && data.length > 0) {
-            setLocalSchedules(data);
-            onDataCallback(data, true);
-          }
-        })
-        .catch(() => {
-          // 백엔드 없어도 로컬 모드로 안정적 유지
-        });
-
-      const wsUrl = getWsUrl();
-      ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        isConnected = true;
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'SCHEDULES_UPDATE' && Array.isArray(msg.data)) {
-            setLocalSchedules(msg.data);
-            onDataCallback(msg.data, true);
-          }
-        } catch (e) {}
-      };
-
-      ws.onerror = () => {
-        if (ws) ws.close();
-      };
-    } catch (err) {}
+  if (db) {
+    const schedulesRef = collection(db, 'schedules');
+    const unsubscribeFirebase = onSnapshot(
+      schedulesRef,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const cloudData = [];
+          snapshot.forEach((docSnap) => {
+            cloudData.push({ id: docSnap.id, ...docSnap.data() });
+          });
+          cloudData.sort((a, b) => new Date(a.date) - new Date(b.date));
+          saveLocalSchedules(cloudData);
+          callback(cloudData, true);
+        } else {
+          seedInitialFirestore(db).then((data) => callback(data, true));
+        }
+      },
+      (error) => {
+        callback(getLocalSchedules(), false);
+      }
+    );
+    return () => unsubscribeFirebase();
   }
 
-  // Local storage change listener
-  const handleLocalUpdate = (e) => {
-    onDataCallback(e.detail || getLocalSchedules(), isConnected);
-  };
+  const handleLocalUpdate = (e) => callback(e.detail || getLocalSchedules(), false);
   window.addEventListener('local-schedules-updated', handleLocalUpdate);
-
-  return () => {
-    if (ws) {
-      try { ws.close(); } catch(e) {}
-    }
-    window.removeEventListener('local-schedules-updated', handleLocalUpdate);
-  };
+  return () => window.removeEventListener('local-schedules-updated', handleLocalUpdate);
 };
 
-/**
- * 일정 추가 또는 수정
- */
-export const saveScheduleItem = async (schedule) => {
+const seedInitialFirestore = async (db) => {
+  try {
+    const batch = writeBatch(db);
+    INITIAL_SCHEDULES.forEach((item) => {
+      const docRef = doc(db, 'schedules', item.id);
+      batch.set(docRef, item);
+    });
+    await batch.commit();
+    saveLocalSchedules(INITIAL_SCHEDULES);
+    return INITIAL_SCHEDULES;
+  } catch (e) {
+    return INITIAL_SCHEDULES;
+  }
+};
+
+export const saveSchedule = async (schedule) => {
   const now = new Date().toISOString();
-  const itemToSave = {
+  const scheduleData = {
     ...schedule,
-    id: schedule.id || `sodam-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: schedule.id || `sodam-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     teachers: schedule.teachers || (schedule.leaderTeacher ? [schedule.leaderTeacher, schedule.assistantTeacher].filter(Boolean) : []),
     playersCount: Number(schedule.playersCount) || 6,
     updatedAt: now,
-    createdAt: schedule.createdAt || now,
+    createdAt: schedule.createdAt || now
   };
 
-  // 1. 로컬 저장소 즉시 업데이트
-  const currentList = getLocalSchedules();
-  const existingIndex = currentList.findIndex((item) => item.id === itemToSave.id);
-  let updatedList;
-  if (existingIndex >= 0) {
-    updatedList = [...currentList];
-    updatedList[existingIndex] = itemToSave;
+  const current = getLocalSchedules();
+  const index = current.findIndex((item) => item.id === scheduleData.id);
+  let updated;
+  if (index >= 0) {
+    updated = [...current];
+    updated[index] = scheduleData;
   } else {
-    updatedList = [itemToSave, ...currentList];
+    updated = [scheduleData, ...current];
   }
-  setLocalSchedules(updatedList);
+  saveLocalSchedules(updated);
 
-  // 2. 백엔드 서버에 전송 (모든 기기에 실시간 브로드캐스트)
-  try {
-    const apiBase = getApiBaseUrl();
-    await fetch(`${apiBase}/api/schedules`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(itemToSave),
-    });
-  } catch (err) {
-    console.warn('Failed to sync with backend server, saved locally:', err);
+  const db = initFirestore();
+  if (db) {
+    try {
+      const docRef = doc(db, 'schedules', scheduleData.id);
+      await setDoc(docRef, scheduleData, { merge: true });
+    } catch (e) {}
   }
-
-  return itemToSave;
+  return scheduleData;
 };
 
-/**
- * 일정 삭제
- */
-export const deleteScheduleItem = async (id) => {
-  const currentList = getLocalSchedules();
-  const updatedList = currentList.filter((item) => item.id !== id);
-  setLocalSchedules(updatedList);
+export const deleteSchedule = async (id) => {
+  const current = getLocalSchedules();
+  const updated = current.filter((item) => item.id !== id);
+  saveLocalSchedules(updated);
 
-  try {
-    const apiBase = getApiBaseUrl();
-    await fetch(`${apiBase}/api/schedules/${id}`, {
-      method: 'DELETE',
-    });
-  } catch (err) {
-    console.warn('Failed to sync delete with backend server:', err);
+  const db = initFirestore();
+  if (db) {
+    try {
+      const docRef = doc(db, 'schedules', id);
+      await deleteDoc(docRef);
+    } catch (e) {}
   }
 };
 
-/**
- * 샘플 데이터로 초기화
- */
 export const resetToDefaultData = async () => {
-  setLocalSchedules(INITIAL_SCHEDULES);
-  try {
-    const apiBase = getApiBaseUrl();
-    await fetch(`${apiBase}/api/schedules/reset`, { method: 'POST' });
-  } catch (err) {
-    console.warn('Reset backend failed:', err);
+  saveLocalSchedules(INITIAL_SCHEDULES);
+  const db = initFirestore();
+  if (db) {
+    try { await seedInitialFirestore(db); } catch (e) {}
   }
   return INITIAL_SCHEDULES;
-};
-
-/**
- * CSV 파일 내보내기
- */
-export const exportToCsvFile = (schedules) => {
-  const headers = ['대회종목', '대회명', '날짜', '시간', '목적지(장소)', '집결정보', '인솔교사', '출전인원', '이동수단', '비고/결과'];
-  
-  const rows = schedules.map(s => {
-    const teachersList = (s.teachers && s.teachers.length > 0) ? s.teachers.join(', ') : (s.leaderTeacher || '');
-    return [
-      `"${s.sport || ''}"`,
-      `"${(s.title || '').replace(/"/g, '""')}"`,
-      `"${s.date || ''}"`,
-      `"${s.time || ''}"`,
-      `"${(s.location || '').replace(/"/g, '""')}"`,
-      `"${(s.gatheringPlace || '').replace(/"/g, '""')}"`,
-      `"${teachersList}"`,
-      `"${s.playersCount || 0}명"`,
-      `"${(s.transportation || '').replace(/"/g, '""')}"`,
-      `"${(s.memo || s.result || '').replace(/"/g, '""')}"`
-    ];
-  });
-
-  const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\r\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', `소담초_학생스포츠클럽_인솔현황_${new Date().toISOString().split('T')[0]}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
 };
